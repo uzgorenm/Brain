@@ -1,0 +1,10 @@
+**/.build/
+**/.swiftpm/
+**/build/
+main
+*.sqlite
+*.db
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
