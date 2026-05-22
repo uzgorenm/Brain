@@ -61,24 +61,30 @@ final class ModelDownloadManager: NSObject, URLSessionDownloadDelegate {
     }
     
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        Task { @MainActor in
-            self.isDownloading = false
-            
-            guard let localModelURL = self.localModelURL else {
+        // Must move the file synchronously before the delegate method returns,
+        // otherwise URLSession automatically deletes the temporary file.
+        guard let localModelURL = self.localModelURL else {
+            Task { @MainActor in
+                self.isDownloading = false
                 self.errorMessage = "Could not find local documents directory."
-                return
             }
+            return
+        }
+        
+        do {
+            if FileManager.default.fileExists(atPath: localModelURL.path) {
+                try FileManager.default.removeItem(at: localModelURL)
+            }
+            try FileManager.default.moveItem(at: location, to: localModelURL)
             
-            do {
-                if FileManager.default.fileExists(atPath: localModelURL.path) {
-                    try FileManager.default.removeItem(at: localModelURL)
-                }
-                try FileManager.default.moveItem(at: location, to: localModelURL)
+            Task { @MainActor in
+                self.isDownloading = false
                 self.isDownloaded = true
-                
-                // Alert the app store to initialize the LLM
                 NotificationCenter.default.post(name: NSNotification.Name("ModelDownloaded"), object: nil)
-            } catch {
+            }
+        } catch {
+            Task { @MainActor in
+                self.isDownloading = false
                 self.errorMessage = "Failed to save model: \(error.localizedDescription)"
             }
         }

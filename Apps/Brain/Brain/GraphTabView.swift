@@ -371,16 +371,14 @@ private struct GraphCanvasNode: View {
                 .overlay(Circle().stroke(isSelected ? BrainTheme.mastered : Color.clear, lineWidth: 4))
                 .shadow(color: dotColor.opacity(isSelected ? 0.45 : 0.15), radius: isSelected ? 18 : 8)
 
-            if isSelected {
-                Text(card.title)
-                    .font(.caption.weight(.bold))
-                    .lineLimit(1)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.78))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(BrainTheme.mastered.opacity(0.55)))
-            }
+            Text(card.title)
+                .font(.caption.weight(isSelected ? .bold : .medium))
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(isSelected ? 0.78 : 0.50))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(isSelected ? BrainTheme.mastered.opacity(0.55) : Color.white.opacity(0.12)))
         }
         .frame(width: 150, height: 80)
     }

@@ -33,6 +33,7 @@ struct CreateCardTabView: View {
                 HStack {
                     Button("Cancel") {
                         resetComposer()
+                        hideKeyboard()
                     }
                     .font(.title3.weight(.semibold))
 
@@ -52,6 +53,7 @@ struct CreateCardTabView: View {
                             audioPath: audioPath
                         )
                         resetComposer()
+                        hideKeyboard()
                         saveConfirmation = true
                     }
                     .font(.title3.weight(.semibold))
@@ -182,6 +184,11 @@ struct CreateCardTabView: View {
                     }
                     .padding(.top, 24)
                 }
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                hideKeyboard()
             }
             .brainDarkScreen()
             .platformNavigationBarStyle()
@@ -260,6 +267,12 @@ struct CreateCardTabView: View {
         } catch {
             appStore.errorMessage = error.localizedDescription
         }
+    }
+
+    private func hideKeyboard() {
+#if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
     }
 }
 

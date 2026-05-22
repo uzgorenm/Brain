@@ -25,11 +25,7 @@ struct QuestionTabView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Current Deck: \(appStore.selectedDeckName)")
-                                .font(.headline)
-                                .foregroundStyle(BrainTheme.mutedText)
-                                .padding(.horizontal, 20)
-                            
+                            // "Current Deck" label removed since AI uses all flashcards globally
                             VStack(spacing: 0) {
                                 TextField("Ask a question about your flashcards...", text: $question, axis: .vertical)
                                     .font(.title3)
@@ -102,12 +98,21 @@ struct QuestionTabView: View {
     
     private func askQuestion() {
         let currentQuestion = question
-        let deckCards = appStore.cards(in: appStore.selectedDeckName)
+        // Use ALL flashcards in the app for context, regardless of the selected deck
+        let deckCards = appStore.cards
         let context = deckCards.map { "Q: \($0.title)\nA: \($0.body)" }
         
         Task {
             isAsking = true
             defer { isAsking = false }
+            
+            if context.isEmpty {
+                await MainActor.run {
+                    self.answer = "You haven't created any flashcards yet! Please create some flashcards so I have knowledge to pull from."
+                }
+                return
+            }
+            
             do {
                 let generatedAnswer = try await BrainCore.LLMManager.shared.answerQuestion(question: currentQuestion, context: context)
                 await MainActor.run {
