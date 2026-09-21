@@ -19,7 +19,11 @@ let package = Package(
         .target(
             name: "BrainCore",
             dependencies: [
-                .product(name: "LiteRTLM", package: "LiteRT-LM")
+                .product(
+                    name: "LiteRTLM",
+                    package: "LiteRT-LM",
+                    condition: .when(platforms: [.iOS])
+                )
             ]
         ),
         .executableTarget(

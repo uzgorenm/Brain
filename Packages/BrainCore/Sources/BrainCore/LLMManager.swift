@@ -1,14 +1,19 @@
 import Foundation
+#if canImport(LiteRTLM)
 @preconcurrency import LiteRTLM
+#endif
 
 public final class LLMManager: @unchecked Sendable {
     public static let shared = LLMManager()
 
+#if canImport(LiteRTLM)
     private var engine: Engine?
+#endif
 
     public init() {}
 
     public func initialize(modelPath: String) async throws {
+#if canImport(LiteRTLM)
 #if targetEnvironment(simulator)
         let backend: Backend = .cpu(threadCount: 4)
 #else
@@ -22,13 +27,21 @@ public final class LLMManager: @unchecked Sendable {
         let newEngine = Engine(engineConfig: config)
         try await newEngine.initialize()
         self.engine = newEngine
+#else
+        throw LLMError.unsupportedPlatform
+#endif
     }
 
     public var isInitialized: Bool {
+#if canImport(LiteRTLM)
         engine != nil
+#else
+        false
+#endif
     }
 
     public func generateFlashcard(from detailedInformation: String) async throws -> (title: String, body: String) {
+#if canImport(LiteRTLM)
         guard let engine = engine else { throw LLMError.notInitialized }
         let conversation = try await engine.createConversation()
         
@@ -65,9 +78,13 @@ public final class LLMManager: @unchecked Sendable {
         if body.isEmpty { body = responseText }
         
         return (title, body)
+#else
+        throw LLMError.unsupportedPlatform
+#endif
     }
 
     public func answerQuestion(question: String, context: [String]) async throws -> String {
+#if canImport(LiteRTLM)
         guard let engine = engine else { throw LLMError.notInitialized }
         let conversation = try await engine.createConversation()
         
@@ -84,9 +101,22 @@ public final class LLMManager: @unchecked Sendable {
         
         let response = try await conversation.sendMessage(Message(prompt))
         return response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
+#else
+        throw LLMError.unsupportedPlatform
+#endif
     }
 }
 
-public enum LLMError: Error {
+public enum LLMError: LocalizedError {
     case notInitialized
+    case unsupportedPlatform
+
+    public var errorDescription: String? {
+        switch self {
+        case .notInitialized:
+            "Download and initialize a local model before using AI features."
+        case .unsupportedPlatform:
+            "Local AI is not available on this platform."
+        }
+    }
 }
