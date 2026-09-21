@@ -13,13 +13,22 @@ let package = Package(
         .executable(name: "brain-demo", targets: ["BrainCLI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/google-ai-edge/LiteRT-LM", branch: "main")
+        .package(
+            url: "https://github.com/aleroot/mlx-swift-lm.git",
+            revision: "12ff82f0ea00179cd015efd744c02f993d88ca83"
+        ),
+        .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0")
     ],
     targets: [
         .target(
             name: "BrainCore",
             dependencies: [
-                .product(name: "LiteRTLM", package: "LiteRT-LM")
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "HuggingFace", package: "swift-huggingface"),
+                .product(name: "Tokenizers", package: "swift-transformers")
             ]
         ),
         .executableTarget(

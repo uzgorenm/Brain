@@ -19,6 +19,7 @@ struct GraphTabView: View {
                 GraphWorkspaceView()
             }
         }
+        .brainScreen()
     }
 }
 
@@ -29,6 +30,7 @@ private struct GraphWorkspaceView: View {
     @State private var showingConnectedCard = false
     @State private var showingReviewSession = false
     @State private var showingSelectedCardDetails = false
+    @State private var isInteracting = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -36,7 +38,7 @@ private struct GraphWorkspaceView: View {
 
             HStack(spacing: 0) {
                 ZStack {
-                    KnowledgeGraphCanvas(scale: $scale, offset: $offset)
+                    KnowledgeGraphCanvas(scale: $scale, offset: $offset, isInteracting: $isInteracting)
 
                     VStack(alignment: .leading, spacing: 24) {
                         GraphHeader(showingReviewSession: $showingReviewSession)
@@ -50,36 +52,33 @@ private struct GraphWorkspaceView: View {
                         }
 
                         HStack(spacing: 14) {
+                            Spacer()
                             Button {
                                 showingConnectedCard = true
                             } label: {
-                                Label("Connect Manually", systemImage: "link")
-                                    .font(.headline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
+                                Label("Connect", systemImage: "link")
+                                    .font(.headline)
+                                    .padding(16)
+                                    .background(BrainTheme.accent.opacity(0.85))
+                                    .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                            .background(BrainTheme.surface)
-                            .clipShape(Capsule())
-
-                            Button {} label: {
-                                Label("AI Map Decks", systemImage: "sparkles")
-                                    .font(.headline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(Color.black.opacity(0.80))
-                            .background(BrainTheme.mastered)
-                            .clipShape(Capsule())
+                            .foregroundStyle(.white)
+                            .help("Connect the selected card")
+                            .disabled(appStore.selectedCard == nil)
+                            .opacity(appStore.selectedCard == nil ? 0.5 : 1)
                         }
                     }
                     .padding(28)
+                    .opacity(isInteracting ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.2), value: isInteracting)
 
 #if os(macOS)
                     GraphToolbar(scale: $scale, offset: $offset)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                         .padding(.trailing, 30)
+                        .opacity(isInteracting ? 0 : 1)
+                        .animation(.easeInOut(duration: 0.2), value: isInteracting)
 #endif
                 }
 
@@ -90,14 +89,9 @@ private struct GraphWorkspaceView: View {
                 }
             }
         }
-        .brainDarkScreen()
+        .brainScreen()
         .platformNavigationBarStyle()
-        .navigationTitle("")
-        .onAppear {
-            appStore.selectedCardID = nil
-            scale = 1
-            offset = .zero
-        }
+        .navigationTitle("Map")
         .sheet(isPresented: $showingConnectedCard) {
             if let selectedCard = appStore.selectedCard {
                 ConnectExistingCardView(sourceCard: selectedCard)
@@ -116,42 +110,37 @@ private struct GraphWorkspaceView: View {
 
 private struct GraphHeader: View {
     @Binding var showingReviewSession: Bool
+    @State private var isLegendExpanded = false
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 16) {
-                headerContent
-
-                Spacer(minLength: 12)
-
-                reviewButton
-            }
-
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center, spacing: 12) {
-                    Text("Connections")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-
-                    Spacer(minLength: 8)
-
-                    reviewButton
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    withAnimation(.spring) { isLegendExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "circle.grid.2x1.fill")
+                        Text("Legend")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(BrainTheme.surface)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.12)))
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
 
-                GraphLegend()
+                if isLegendExpanded {
+                    GraphLegend()
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
-        }
-    }
 
-    private var headerContent: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            Text("Connections")
-                .font(.system(size: 44, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+            Spacer()
 
-            GraphLegend()
+            reviewButton
         }
     }
 
@@ -212,7 +201,7 @@ private struct ToolbarIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.headline.weight(.semibold))
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -254,6 +243,7 @@ private struct KnowledgeGraphCanvas: View {
     @Environment(BrainAppStore.self) private var appStore
     @Binding var scale: Double
     @Binding var offset: CGSize
+    @Binding var isInteracting: Bool
     @State private var dragStartOffset = CGSize.zero
     @State private var gestureStartScale = 1.0
 
@@ -273,30 +263,55 @@ private struct KnowledgeGraphCanvas: View {
                     }
 
                 Canvas { context, _ in
+                    let selectedID = appStore.selectedCardID
                     for edge in appStore.edges {
                         guard let source = layout.positions[edge.sourceCardID],
                               let target = layout.positions[edge.targetCardID] else {
                             continue
                         }
 
+                        let isHighlighted = selectedID == edge.sourceCardID || selectedID == edge.targetCardID
+                        let strokeColor = isHighlighted ? Color.white.opacity(0.8) : Color.white.opacity(0.15)
+                        let strokeWidth: CGFloat = isHighlighted ? 4 : 2
+
                         var path = Path()
                         path.move(to: transformed(source))
                         path.addLine(to: transformed(target))
-                        context.stroke(path, with: .color(.secondary.opacity(0.38)), lineWidth: 2)
+                        context.stroke(path, with: .color(strokeColor), lineWidth: strokeWidth)
                     }
                 }
                 .allowsHitTesting(false)
 
                 ForEach(appStore.cards) { card in
-                    let position = transformed(layout.positions[card.id] ?? CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2))
+                    let rawPosition = layout.positions[card.id] ?? CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                    let position = transformed(rawPosition)
+                    let isSelected = appStore.selectedCardID == card.id
+                    let opacity = (appStore.selectedCardID == nil || isSelected || appStore.edges.contains { ($0.sourceCardID == appStore.selectedCardID && $0.targetCardID == card.id) || ($0.targetCardID == appStore.selectedCardID && $0.sourceCardID == card.id) }) ? 1.0 : 0.3
+
                     GraphCanvasNode(
                         card: card,
-                        isSelected: appStore.selectedCardID == card.id,
-                        state: appStore.reviewState(for: card)
+                        isSelected: isSelected,
+                        state: appStore.reviewState(for: card),
+                        scale: scale
                     )
                     .position(position)
+                    .opacity(opacity)
+                    .animation(.easeInOut(duration: 0.2), value: appStore.selectedCardID)
                     .onTapGesture {
                         appStore.selectedCardID = card.id
+                        #if os(iOS)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        #endif
+
+                        let targetX = proxy.size.width / 2
+                        let targetY = proxy.size.height / 3
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            offset = CGSize(
+                                width: targetX - rawPosition.x * scale,
+                                height: targetY - rawPosition.y * scale
+                            )
+                            dragStartOffset = offset
+                        }
                     }
                 }
             }
@@ -308,18 +323,22 @@ private struct KnowledgeGraphCanvas: View {
                             width: dragStartOffset.width + value.translation.width,
                             height: dragStartOffset.height + value.translation.height
                         )
+                        isInteracting = true
                     }
                     .onEnded { _ in
                         dragStartOffset = offset
+                        isInteracting = false
                     }
             )
             .simultaneousGesture(
                 MagnificationGesture()
                     .onChanged { value in
                         scale = min(1.8, max(0.65, gestureStartScale * value))
+                        isInteracting = true
                     }
                     .onEnded { _ in
                         gestureStartScale = scale
+                        isInteracting = false
                     }
             )
             .onChange(of: offset) { _, nextOffset in
@@ -362,25 +381,28 @@ private struct GraphCanvasNode: View {
     let card: KnowledgeCard
     let isSelected: Bool
     let state: ReviewState
+    let scale: Double
 
     var body: some View {
-        VStack(spacing: 8) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: isSelected ? 38 : 24, height: isSelected ? 38 : 24)
-                .overlay(Circle().stroke(isSelected ? BrainTheme.mastered : Color.clear, lineWidth: 4))
-                .shadow(color: dotColor.opacity(isSelected ? 0.45 : 0.15), radius: isSelected ? 18 : 8)
-
-            Text(card.title)
-                .font(.caption.weight(isSelected ? .bold : .medium))
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .background(Color.black.opacity(isSelected ? 0.78 : 0.50))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(isSelected ? BrainTheme.mastered.opacity(0.55) : Color.white.opacity(0.12)))
-        }
-        .frame(width: 150, height: 80)
+        Circle()
+            .fill(dotColor)
+            .frame(width: isSelected ? 38 : 24, height: isSelected ? 38 : 24)
+            .overlay(Circle().stroke(isSelected ? BrainTheme.mastered : Color.clear, lineWidth: 4))
+            .shadow(color: dotColor.opacity(isSelected ? 0.45 : 0.15), radius: isSelected ? 18 : 8)
+            .padding(16)
+            .contentShape(Circle())
+            .overlay(alignment: .top) {
+                Text(card.shortTitle)
+                    .font(.caption.weight(isSelected ? .bold : .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color(white: 0.88))
+                    .opacity(isSelected ? 1.0 : Double(max(0, min(1, (scale - 0.8) / 0.4))))
+                    .animation(.easeInOut(duration: 0.2), value: scale)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 120)
+                    .offset(y: isSelected ? 46 : 32)
+            }
     }
 
     private var label: String {
@@ -430,12 +452,17 @@ private struct GraphInspectorView: View {
                         .lineLimit(8)
                 }
 
-                GraphStudyStats(state: state)
+                if card.isIncludedInReview {
+                    GraphStudyStats(state: state)
+                } else {
+                    Label("Not included in review", systemImage: "note.text")
+                        .font(.subheadline).foregroundStyle(BrainTheme.mutedText)
+                }
 
                 NavigationLink {
                     GraphCardMoreView(card: card)
                 } label: {
-                    Label("More", systemImage: "ellipsis.circle")
+                    Label("View details", systemImage: "doc.text")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -496,6 +523,8 @@ private struct GraphInspectorView: View {
                                 } label: {
                                     Image(systemName: "link.badge.minus")
                                         .imageScale(.medium)
+                                        .padding(12)
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.borderless)
                                 .help("Delete connection to \(neighbor.title)")
@@ -559,12 +588,18 @@ private struct GraphCardDetailSummary: View {
 
                 Spacer()
 
-                Text("\(state.status.masteryPercent)%")
-                    .font(.title3.bold())
-                    .foregroundStyle(BrainTheme.accent)
+                if card.isIncludedInReview {
+                    Text("\(state.status.masteryPercent)%")
+                        .font(.headline)
+                        .foregroundStyle(BrainTheme.accent)
+                }
             }
 
-            GraphStudyStats(state: state, compact: true)
+            if card.isIncludedInReview {
+                GraphStudyStats(state: state, compact: true)
+            } else {
+                Text("Not included in review").font(.caption).foregroundStyle(BrainTheme.mutedText)
+            }
 
             Text(card.body)
                 .font(.caption)
@@ -572,7 +607,7 @@ private struct GraphCardDetailSummary: View {
                 .lineLimit(2)
 
             Button(action: showMore) {
-                Label("More", systemImage: "ellipsis.circle")
+                Label("View details", systemImage: "doc.text")
                     .font(.headline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 9)
@@ -675,7 +710,7 @@ private struct InfoRow: View {
     }
 }
 
-private struct GraphCardMoreView: View {
+struct GraphCardMoreView: View {
     @Environment(BrainAppStore.self) private var appStore
     @Environment(\.dismiss) private var dismiss
     let card: KnowledgeCard
@@ -685,7 +720,6 @@ private struct GraphCardMoreView: View {
 
     var body: some View {
         let images = appStore.images(for: card)
-        let state = appStore.reviewState(for: card)
         let audioURL = appStore.audioURL(for: card)
 
         NavigationStack {
@@ -705,7 +739,7 @@ private struct GraphCardMoreView: View {
                                             Text(card.title)
                                                 .font(.title2.bold())
                                                 .lineLimit(isCardInfoExpanded ? nil : 1)
-                                            Text(card.deckName)
+                                            Text(card.isNote ? "Note" : card.deckName)
                                                 .font(.headline)
                                                 .foregroundStyle(BrainTheme.accent)
                                         }
@@ -718,7 +752,9 @@ private struct GraphCardMoreView: View {
                                             .rotationEffect(.degrees(isCardInfoExpanded ? 180 : 0))
                                     }
 
-                                    ReviewStateBadge(state: state)
+                                    if card.isFlashcard {
+                                        ReviewStateBadge(state: appStore.reviewState(for: card))
+                                    }
 
                                     if isCardInfoExpanded {
                                         Text(card.body)
@@ -748,7 +784,9 @@ private struct GraphCardMoreView: View {
                                     AttachmentDetailDisclosureRow(
                                         title: "No photos attached",
                                         systemImage: "photo",
-                                        detail: "This card does not have any saved photos yet. Add images from the New Card screen with the photo button before saving."
+                                        detail: card.isNote
+                                            ? "This note does not have any saved photos."
+                                            : "This card does not have any saved photos yet. Add images while creating a card."
                                     )
                                 } else {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
@@ -780,7 +818,9 @@ private struct GraphCardMoreView: View {
                                     AttachmentDetailDisclosureRow(
                                         title: "No audio recording attached",
                                         systemImage: "waveform",
-                                        detail: "This card does not have a saved recording yet. Add audio from the New Card screen with the mic button before saving."
+                                        detail: card.isNote
+                                            ? "This note does not have a saved recording."
+                                            : "This card does not have a saved recording yet. Add audio while creating a card."
                                     )
                                 }
                             }
@@ -795,8 +835,8 @@ private struct GraphCardMoreView: View {
                     .onTapGesture(perform: collapseCardInfo)
                 }
             }
-            .brainDarkScreen()
-            .navigationTitle("Card Details")
+            .brainScreen()
+            .navigationTitle(card.isNote ? "Note Attachments" : "Card Attachments")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -851,9 +891,9 @@ private struct CardAttachmentImage: View {
         }
         .frame(height: 130)
         .frame(maxWidth: .infinity)
-        .background(Color.white.opacity(0.08))
+        .background(BrainTheme.subtleFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(BrainTheme.border))
     }
 }
 
@@ -887,7 +927,7 @@ private struct AudioAttachmentRow: View {
             Spacer()
         }
         .padding(12)
-        .background(Color.white.opacity(0.08))
+        .background(BrainTheme.subtleFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
@@ -935,7 +975,7 @@ private struct AttachmentDetailDisclosureRow: View {
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(BrainTheme.mutedText)
         .padding(12)
-        .background(Color.white.opacity(0.06))
+        .background(BrainTheme.subtleFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

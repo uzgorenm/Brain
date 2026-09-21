@@ -46,7 +46,7 @@ The user experience should feel native on each platform while sharing as much co
 
 ### Knowledge Card
 
-A knowledge card is the primary unit of information. It behaves like a flashcard at review time and like a flexible note when expanded.
+`KnowledgeCard` is the shared persistence record, but the product presents two content types. Notes are freeform text and never enter scheduled review. Flashcards contain a question and answer and own all review behavior. A `kind=note` metadata value identifies notes; existing unmarked records remain flashcards for backward compatibility.
 
 Required fields:
 
@@ -54,13 +54,13 @@ Required fields:
 - Description/body
 - Creation timestamp
 - Updated timestamp
-- Review metadata
 
 Optional fields:
 
 - Images
 - Tags
 - User-defined metadata
+- Review metadata for flashcards
 
 Edges should be stored separately from the card record rather than as an array of cards embedded on the card. A card may expose computed incoming, outgoing, or neighboring cards in Swift for UI convenience, but the SQLite source of truth should use a separate `edges` table. This avoids duplicated relationship data, supports graph queries and indexing, allows edge metadata such as relationship type or weight, and makes sync conflict handling cleaner.
 
@@ -664,3 +664,16 @@ Deferred from coded MVP:
 - Media upload/download.
 - LLM-assisted connections.
 - Graph-aware supplemental recall.
+
+## Capture extension (September 2026)
+
+The capture workflow extends the original flashcard MVP into a home for notes and ideas. This supersedes the earlier non-goal about general note capture; a full rich document editor remains outside scope.
+
+- Open on a simple recording screen, with a writing alternative and recent notes below.
+- Transcribe recordings, allow text correction, and remove the audio only after the note is saved. Keep unfinished recordings recoverable.
+- Provide a system shortcut that opens recording, without overwriting an existing draft.
+- Keep notes in the existing local card library so they remain searchable, editable, and connectable.
+- Keep notes out of scheduled review. Put flashcard creation, review, and activity in a separate Cards area.
+- Let the local model rewrite a note for clarity. Show only the final rewrite in an editable preview alongside the original text before the user accepts it.
+
+Implementation conventions and remaining platform checks are documented in DESIGN.md and CAPTURE_VERIFICATION.md.

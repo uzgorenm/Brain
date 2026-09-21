@@ -2,32 +2,32 @@ import SwiftUI
 import BrainCore
 
 struct SettingsTabView: View {
+    @Environment(BrainAppStore.self) private var appStore
     @State private var downloadManager = ModelDownloadManager.shared
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                HStack {
-                    Text("Settings")
-                        .font(.largeTitle.bold())
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .background(BrainTheme.surface)
-                
-                Divider()
-                    .overlay(Color.white.opacity(0.08))
-                
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         
+                        BrainSurface {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Capture & privacy").font(.headline)
+                                Text("Recordings are transcribed on device. Brain removes the audio after you save the note. Unfinished recordings stay available for retry.")
+                                    .font(.subheadline).foregroundStyle(BrainTheme.mutedText)
+                                Text("Action button and shortcuts").font(.headline)
+                                Text("Use Write a note to open the editor with the keyboard ready, or Record a thought to start a voice note after microphone permission. Add either Brain shortcut to your Home Screen or Action button.")
+                                    .font(.subheadline).foregroundStyle(BrainTheme.mutedText)
+                            }
+                        }
+
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("AI Features & Model Download")
+                            Text("Optional AI")
                                 .font(.headline)
                                 .foregroundStyle(BrainTheme.accent)
                             
-                            Text("To enable AI Flashcard Generation and AI Question features, Brain requires a local Language Model to be downloaded to your device.")
+                            Text("Rewrite notes, generate flashcards, and ask questions with a model that runs on this device. Recording, transcription, and review work without it.")
                                 .font(.subheadline)
                                 .foregroundStyle(BrainTheme.mutedText)
                             
@@ -35,18 +35,18 @@ struct SettingsTabView: View {
                                 HStack {
                                     Text("Model:")
                                         .fontWeight(.semibold)
-                                    Text("Gemma 2B (LiteRT-LM)")
+                                    Text("LFM2.5-2.6B MLX 4-bit")
                                 }
                                 HStack {
                                     Text("Size:")
                                         .fontWeight(.semibold)
-                                    Text("~2.5 GB")
+                                    Text("~1.47 GB")
                                 }
                                 HStack {
                                     Text("Status:")
                                         .fontWeight(.semibold)
-                                    Text(BrainCore.LLMManager.shared.isInitialized ? "Initialized & Ready" : (downloadManager.isDownloaded ? "Downloaded (Restart App)" : "Not Downloaded"))
-                                        .foregroundStyle(BrainCore.LLMManager.shared.isInitialized ? .green : .orange)
+                                    Text(appStore.isLocalAIReady ? "Ready" : (downloadManager.isDownloaded ? "Loading…" : "Not downloaded"))
+                                        .foregroundStyle(appStore.isLocalAIReady ? .green : .orange)
                                 }
                             }
                             .font(.subheadline)
@@ -70,7 +70,7 @@ struct SettingsTabView: View {
                                     }
                                 }
                                 .padding(.top, 10)
-                            } else if !downloadManager.isDownloaded && !BrainCore.LLMManager.shared.isInitialized {
+                            } else if !downloadManager.isDownloaded && !appStore.isLocalAIReady {
                                 Button(action: {
                                     downloadManager.startDownload()
                                 }) {
@@ -82,20 +82,20 @@ struct SettingsTabView: View {
                                     .padding()
                                     .background(BrainTheme.accent)
                                     .foregroundColor(.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .clipShape(RoundedRectangle(cornerRadius: BrainTheme.cornerRadius))
                                 }
                                 .padding(.top, 10)
                             } else {
                                 HStack {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
-                                    Text("Local Model Ready")
+                                    Text(appStore.isLocalAIReady ? "AI is ready" : "Loading AI model…")
                                         .fontWeight(.medium)
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding()
                                 .background(Color.green.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(RoundedRectangle(cornerRadius: BrainTheme.cornerRadius))
                                 .padding(.top, 10)
                             }
                             
@@ -108,41 +108,39 @@ struct SettingsTabView: View {
                         }
                         .padding(20)
                         .background(BrainTheme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: BrainTheme.cornerRadius))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.10))
+                            RoundedRectangle(cornerRadius: BrainTheme.cornerRadius)
+                                .stroke(BrainTheme.border)
                         )
                         
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Manual Installation (Simulator & Device)")
-                                .font(.headline)
-                                .foregroundStyle(BrainTheme.accent)
+                        DisclosureGroup("Install a model manually") {
                             
-                            Text("If you prefer to download the model manually, you can use the `scripts/download_model.py` provided in the codebase.")
+                            Text("The MLX checkpoint contains several files, so Brain downloads and caches it directly instead of importing one model file.")
                                 .font(.subheadline)
                                 .foregroundStyle(BrainTheme.mutedText)
                             
-                            Text("1. Run `python3 scripts/download_model.py`.\n2. Locate the `gemma-4-E2B-it.litertlm` file.\n3. **iOS Simulator**: Drag the file into the simulator window, which opens the Files app. Select \"On My iPhone\" -> \"Brain\" folder and click Save.\n4. **Physical iPhone**: Use Finder or AirDrop to drop the file into the Brain app's Documents folder.")
+                            Text("For Mac development, run `python3 scripts/download_model.py` to prefetch LiquidAI/LFM2.5-2.6B-MLX-4bit. The app still downloads its own on-device cache when needed.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.top, 4)
                         }
                         .padding(20)
                         .background(BrainTheme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: BrainTheme.cornerRadius))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.10))
+                            RoundedRectangle(cornerRadius: BrainTheme.cornerRadius)
+                                .stroke(BrainTheme.border)
                         )
                         
                     }
                     .padding(20)
+                    .frame(maxWidth: BrainTheme.readableWidth).frame(maxWidth: .infinity)
                 }
             }
-            .brainDarkScreen()
+            .brainScreen()
             .platformNavigationBarStyle()
-            .platformHiddenNavigationBar()
+            .navigationTitle("Settings")
             .onAppear {
                 _ = downloadManager.checkModelExists()
             }

@@ -40,24 +40,31 @@ public final class SQLiteStore: @unchecked Sendable {
         let metadataData = try JSONEncoder().encode(metadata)
         let metadataJSON = String(data: metadataData, encoding: .utf8) ?? "{}"
 
-        try execute(
-            """
-            INSERT INTO cards (id, title, body, metadata_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [.text(card.id.uuidString), .text(title), .text(body), .text(metadataJSON), .double(now.timeIntervalSince1970), .double(now.timeIntervalSince1970)]
-        )
+        try execute("BEGIN IMMEDIATE", [])
+        do {
+            try execute(
+                """
+                INSERT INTO cards (id, title, body, metadata_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [.text(card.id.uuidString), .text(title), .text(body), .text(metadataJSON), .double(now.timeIntervalSince1970), .double(now.timeIntervalSince1970)]
+            )
 
-        for tag in tags {
-            try addTag(tag, to: card.id)
+            for tag in tags {
+                try addTag(tag, to: card.id)
+            }
+
+            for path in imagePaths {
+                try addImage(path: path, to: card.id)
+            }
+
+            try saveReviewState(ReviewState(cardID: card.id, status: .new))
+            try execute("COMMIT", [])
+            return card
+        } catch {
+            try? execute("ROLLBACK", [])
+            throw error
         }
-
-        for path in imagePaths {
-            try addImage(path: path, to: card.id)
-        }
-
-        try saveReviewState(ReviewState(cardID: card.id, status: .new))
-        return card
     }
 
     public func updateCard(_ card: KnowledgeCard) throws {
@@ -230,7 +237,7 @@ public final class SQLiteStore: @unchecked Sendable {
             [.double(now.timeIntervalSince1970)]
         ) { statement in
             try Self.card(from: statement)
-        }
+        }.filter(\.isIncludedInReview)
     }
 
     public func reviewState(for cardID: UUID) throws -> ReviewState? {
@@ -260,28 +267,35 @@ public final class SQLiteStore: @unchecked Sendable {
     }
 
     public func applyReview(cardID: UUID, rating: ReviewRating, reviewedAt: Date = Date()) throws -> ReviewState {
-        let currentState = try reviewState(for: cardID) ?? ReviewState(cardID: cardID)
-        let (nextState, event) = scheduler.apply(rating, to: currentState, reviewedAt: reviewedAt)
-        try saveReviewState(nextState)
-        try execute(
-            """
-            INSERT INTO review_events
-            (id, card_id, user_id, reviewed_at, rating, elapsed_days, scheduled_days, previous_mastery_percent, next_mastery_percent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                .text(event.id.uuidString),
-                .text(cardID.uuidString),
-                .text(event.userID),
-                .double(event.reviewedAt.timeIntervalSince1970),
-                .text(rating.rawValue),
-                .int(event.elapsedDays),
-                .int(event.scheduledDays),
-                .int(event.previousMasteryPercent),
-                .int(event.nextMasteryPercent)
-            ]
-        )
-        return nextState
+        try execute("BEGIN IMMEDIATE", [])
+        do {
+            let currentState = try reviewState(for: cardID) ?? ReviewState(cardID: cardID)
+            let (nextState, event) = scheduler.apply(rating, to: currentState, reviewedAt: reviewedAt)
+            try saveReviewState(nextState)
+            try execute(
+                """
+                INSERT INTO review_events
+                (id, card_id, user_id, reviewed_at, rating, elapsed_days, scheduled_days, previous_mastery_percent, next_mastery_percent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(event.id.uuidString),
+                    .text(cardID.uuidString),
+                    .text(event.userID),
+                    .double(event.reviewedAt.timeIntervalSince1970),
+                    .text(rating.rawValue),
+                    .int(event.elapsedDays),
+                    .int(event.scheduledDays),
+                    .int(event.previousMasteryPercent),
+                    .int(event.nextMasteryPercent)
+                ]
+            )
+            try execute("COMMIT", [])
+            return nextState
+        } catch {
+            try? execute("ROLLBACK", [])
+            throw error
+        }
     }
 
     private func saveReviewState(_ state: ReviewState) throws {

@@ -12,6 +12,7 @@ final class BrainAppStore {
     var selectedDeckName = BrainAppStore.defaultDeckName
     var selectedCardID: KnowledgeCard.ID?
     var errorMessage: String?
+    var isLocalAIReady = LLMManager.shared.isInitialized
 
     private var store: SQLiteStore?
     private var appSupportURL: URL?
@@ -40,13 +41,13 @@ final class BrainAppStore {
                 }
             }
             
-            // Try to initialize the LLM if the model exists in the app's Documents or Support directory
-            Task {
-                await initializeLLM()
+            // Try to initialize the LLM if the MLX model has already been downloaded.
+            Task { @MainActor [weak self] in
+                await self?.initializeLLM()
             }
             
             NotificationCenter.default.addObserver(forName: NSNotification.Name("ModelDownloaded"), object: nil, queue: .main) { [weak self] _ in
-                Task {
+                Task { @MainActor in
                     await self?.initializeLLM()
                 }
             }
@@ -55,28 +56,22 @@ final class BrainAppStore {
         }
     }
     
+    @MainActor
     public func initializeLLM() async {
-        // Look for the .litertlm file
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        let possibleModelURLs = [
-            appSupportURL?.appendingPathComponent("model.litertlm"),
-            appSupportURL?.appendingPathComponent("gemma-4-E2B-it.litertlm"),
-            documentsURL?.appendingPathComponent("model.litertlm"),
-            documentsURL?.appendingPathComponent("gemma-4-E2B-it.litertlm")
-        ].compactMap { $0 }
-        
-        for modelURL in possibleModelURLs {
-            if FileManager.default.fileExists(atPath: modelURL.path) {
-                do {
-                    try await LLMManager.shared.initialize(modelPath: modelURL.path)
-                    print("LLM successfully initialized from \(modelURL.path)")
-                    return
-                } catch {
-                    print("Failed to initialize LLM with \(modelURL.path): \(error)")
-                }
-            }
+        guard ModelDownloadManager.shared.checkModelExists() else {
+            isLocalAIReady = false
+            print("No MLX model found. AI features will be disabled.")
+            return
         }
-        print("No LLM model found. AI features will be disabled.")
+
+        do {
+            try await LLMManager.shared.initialize()
+            isLocalAIReady = true
+            print("MLX LLM successfully initialized")
+        } catch {
+            isLocalAIReady = false
+            print("Failed to initialize MLX LLM: \(error)")
+        }
     }
 
     var selectedCard: KnowledgeCard? {
@@ -84,8 +79,16 @@ final class BrainAppStore {
         return cards.first { $0.id == selectedCardID }
     }
 
+    var notes: [KnowledgeCard] {
+        cards.filter(\.isNote)
+    }
+
+    var flashcards: [KnowledgeCard] {
+        cards.filter(\.isFlashcard)
+    }
+
     var dueCards: [KnowledgeCard] {
-        cards.filter { card in
+        flashcards.filter { card in
             let state = reviewState(for: card)
             if case .new = state.status {
                 return true
@@ -95,7 +98,7 @@ final class BrainAppStore {
     }
 
     var decks: [String] {
-        let deckNames = cards.map(\.deckName)
+        let deckNames = flashcards.map(\.deckName)
         return Array(Set([Self.defaultDeckName] + deckNames)).sorted { lhs, rhs in
             if lhs == Self.defaultDeckName { return true }
             if rhs == Self.defaultDeckName { return false }
@@ -104,7 +107,7 @@ final class BrainAppStore {
     }
 
     func cards(in deckName: String) -> [KnowledgeCard] {
-        cards.filter { $0.deckName == deckName }
+        flashcards.filter { $0.deckName == deckName }
     }
 
     func dueCards(in deckName: String) -> [KnowledgeCard] {
@@ -121,11 +124,15 @@ final class BrainAppStore {
         }
     }
 
-    func createCard(title: String, body: String, deckName: String, imagePaths: [String] = [], audioPath: String? = nil) {
+    @discardableResult
+    func createCard(title: String, body: String, deckName: String, imagePaths: [String] = [], audioPath: String? = nil, shortTitle: String? = nil) -> Bool {
         let normalizedDeckName = Self.normalizedDeckName(deckName)
         var metadata = [KnowledgeCard.deckMetadataKey: normalizedDeckName]
         if let audioPath {
             metadata[KnowledgeCard.audioMetadataKey] = storedMediaPath(for: audioPath)
+        }
+        if let shortTitle, !shortTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            metadata[KnowledgeCard.shortTitleMetadataKey] = shortTitle
         }
 
         do {
@@ -136,12 +143,62 @@ final class BrainAppStore {
                 imagePaths: imagePaths.map(storedMediaPath),
                 metadata: metadata
             )
-            try loadCards()
+            cards.insert(card, at: 0)
             selectedDeckName = normalizedDeckName
             selectedCardID = card.id
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    func saveNote(_ draft: NoteDraft) throws -> KnowledgeCard {
+        guard draft.canSave else { throw CaptureValidationError.emptyNote }
+        // A crash during draft cleanup must not create a second copy on retry.
+        if let saved = cards.first(where: { $0.metadata["captureID"] == draft.id.uuidString }) {
+            return saved
+        }
+        let card = try requireStore().createCard(
+            title: draft.resolvedTitle, body: draft.body.trimmingCharacters(in: .whitespacesAndNewlines),
+            tags: ["Notes"], metadata: draft.metadata
+        )
+        cards.insert(card, at: 0)
+        return card
+    }
+
+    func updateNote(_ card: KnowledgeCard, title: String, body: String) throws {
+        guard cards.contains(where: { $0.id == card.id }) else { throw CaptureValidationError.missingCard }
+        guard card.isNote else { throw CaptureValidationError.wrongContentType }
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CaptureValidationError.emptyNote
+        }
+        var updated = card
+        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.updatedAt = Date()
+        updated.metadata.removeValue(forKey: "reviewEnabled")
+        try requireStore().updateCard(updated)
+        cards.removeAll { $0.id == card.id }
+        cards.insert(updated, at: 0)
+    }
+
+    func updateFlashcard(_ card: KnowledgeCard, question: String, answer: String) throws {
+        guard cards.contains(where: { $0.id == card.id }) else { throw CaptureValidationError.missingCard }
+        guard card.isFlashcard else { throw CaptureValidationError.wrongContentType }
+        guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CaptureValidationError.emptyFlashcard
+        }
+
+        var updated = card
+        updated.title = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.body = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.updatedAt = Date()
+        try requireStore().updateCard(updated)
+        cards.removeAll { $0.id == card.id }
+        cards.insert(updated, at: 0)
     }
 
     func makeMediaFileURL(fileExtension: String) throws -> URL {
@@ -257,12 +314,19 @@ final class BrainAppStore {
         return state.dueAt.map { $0 <= Date() } ?? false
     }
 
-    func review(_ card: KnowledgeCard, rating: ReviewRating) {
+    @discardableResult
+    func review(_ card: KnowledgeCard, rating: ReviewRating) -> Bool {
+        guard card.isFlashcard else {
+            errorMessage = "Only flashcards are part of scheduled review."
+            return false
+        }
         do {
             _ = try requireStore().applyReview(cardID: card.id, rating: rating)
             try loadCards()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -288,9 +352,25 @@ final class BrainAppStore {
     }
 }
 
+private enum CaptureValidationError: LocalizedError {
+    case emptyNote
+    case emptyFlashcard
+    case missingCard
+    case wrongContentType
+    var errorDescription: String? {
+        switch self {
+        case .emptyNote: "Add some text before saving your note."
+        case .emptyFlashcard: "Add both a question and an answer before saving the card."
+        case .missingCard: "This item has been deleted. Return to the library to continue."
+        case .wrongContentType: "This item belongs in a different part of the library."
+        }
+    }
+}
+
 extension KnowledgeCard {
     static let deckMetadataKey = "deck"
     static let audioMetadataKey = "audioPath"
+    static let shortTitleMetadataKey = "shortTitle"
 
     var deckName: String {
         BrainAppStore.normalizedDeckName(metadata[Self.deckMetadataKey] ?? BrainAppStore.defaultDeckName)
@@ -298,6 +378,10 @@ extension KnowledgeCard {
 
     var audioPath: String? {
         metadata[Self.audioMetadataKey]
+    }
+
+    var shortTitle: String {
+        metadata[Self.shortTitleMetadataKey] ?? title
     }
 }
 

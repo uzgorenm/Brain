@@ -2,25 +2,32 @@ import BrainCore
 import SwiftUI
 
 struct ProgressTabView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(BrainAppStore.self) private var appStore
 
     private var analytics: ProgressAnalytics {
-        ProgressAnalytics(cards: appStore.cards, states: states, events: appStore.reviewEvents)
+        ProgressAnalytics(cards: appStore.flashcards, states: states, events: flashcardEvents)
     }
 
     private var states: [ReviewState] {
-        appStore.cards.map { appStore.reviewState(for: $0) }
+        appStore.flashcards.map { appStore.reviewState(for: $0) }
+    }
+
+    private var flashcardEvents: [ReviewEvent] {
+        let flashcardIDs = Set(appStore.flashcards.map(\.id))
+        return appStore.reviewEvents.filter { flashcardIDs.contains($0.cardID) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Activity")
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
-                        .padding(.top, 18)
+                    if flashcardEvents.isEmpty {
+                        Text("Your activity will appear after your first review.")
+                            .foregroundStyle(BrainTheme.mutedText)
+                    }
 
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], spacing: 18) {
                         ActivityMetricCard(title: "Current Streak", value: "\(analytics.currentStreakDays)", suffix: analytics.currentStreakDays == 1 ? "Day" : "Days")
                         ActivityMetricCard(title: "Cards Learned", value: "\(analytics.cardsLearned)", suffix: "")
                         ActivityMetricCard(title: "Retention %", value: "\(analytics.retentionPercent)", suffix: "%")
@@ -33,7 +40,7 @@ struct ProgressTabView: View {
                                 Text("Consistency")
                                     .font(.title2.bold())
                                 Spacer()
-                                Text("\(analytics.reviewsLast91Days) reviews in 13 weeks")
+                                Text("\(analytics.reviewsLast91Days) \(analytics.reviewsLast91Days == 1 ? "review" : "reviews") in 13 weeks")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(BrainTheme.mutedText)
                             }
@@ -79,7 +86,9 @@ struct ProgressTabView: View {
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
-            .brainDarkScreen()
+            .navigationTitle("Activity")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .brainScreen()
             .platformNavigationBarStyle()
         }
     }
@@ -184,15 +193,15 @@ private struct ConsistencyDay: Identifiable {
     static func color(for intensity: Int) -> Color {
         switch intensity {
         case 0:
-            Color.white.opacity(0.06)
+            BrainTheme.subtleFill
         case 1:
-            Color.green.opacity(0.35)
+            BrainTheme.accent.opacity(0.35)
         case 2:
-            Color.green.opacity(0.55)
+            BrainTheme.accent.opacity(0.55)
         case 3:
-            Color.green.opacity(0.75)
+            BrainTheme.accent.opacity(0.75)
         default:
-            Color.green
+            BrainTheme.accent
         }
     }
 }
@@ -217,32 +226,33 @@ private struct ActivityMetricCard: View {
                     .font(.headline)
                     .foregroundStyle(BrainTheme.mutedText)
 
-                Spacer(minLength: 56)
+                Spacer(minLength: 20)
 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(value)
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .font(.largeTitle.bold())
                     if suffix.isEmpty == false {
                         Text(suffix)
                             .font(.title3.weight(.semibold))
                     }
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 95, alignment: .leading)
         }
     }
 }
 
 private struct ConsistencyGrid: View {
     let days: [ConsistencyDay]
-    private let columns = Array(repeating: GridItem(.fixed(16), spacing: 7), count: 13)
+    private let columns = Array(repeating: GridItem(.flexible(minimum: 5), spacing: 4), count: 13)
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 7) {
             ForEach(days) { day in
                 RoundedRectangle(cornerRadius: 3)
                     .fill(ConsistencyDay.color(for: day.intensity))
-                    .frame(width: 16, height: 16)
+                    .frame(height: 12)
+                    .accessibilityLabel("\(day.date.formatted(date: .abbreviated, time: .omitted)), \(day.reviewCount) reviews")
                     .help("\(day.reviewCount) reviews")
             }
         }
@@ -351,7 +361,7 @@ private struct ChartGrid: View {
                         .font(.caption)
                         .foregroundStyle(BrainTheme.mutedText)
                     Rectangle()
-                        .fill(Color.white.opacity(0.08))
+                        .fill(BrainTheme.border)
                         .frame(height: 1)
                 }
                 if percent != labels.last {

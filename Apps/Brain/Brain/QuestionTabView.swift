@@ -3,126 +3,69 @@ import SwiftUI
 
 struct QuestionTabView: View {
     @Environment(BrainAppStore.self) private var appStore
+    @Environment(\.dismiss) private var dismiss
     @State private var question = ""
     @State private var answer: String?
     @State private var isAsking = false
-    
+    @State private var error: String?
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Ask AI")
-                        .font(.largeTitle.bold())
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .background(BrainTheme.surface)
-                
-                Divider()
-                    .overlay(Color.white.opacity(0.08))
-                
-                ScrollView {
-                    VStack(spacing: 24) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // "Current Deck" label removed since AI uses all flashcards globally
-                            VStack(spacing: 0) {
-                                TextField("Ask a question about your flashcards...", text: $question, axis: .vertical)
-                                    .font(.title3)
-                                    .lineLimit(4...8)
-                                    .padding(18)
-                                    .disabled(isAsking)
-                                
-                                Divider()
-                                    .overlay(Color.white.opacity(0.10))
-                                
-                                Button(action: askQuestion) {
-                                    HStack {
-                                        if isAsking {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .tint(BrainTheme.accent)
-                                        } else {
-                                            Image(systemName: "paperplane.fill")
-                                        }
-                                        Text(isAsking ? "Thinking..." : "Ask AI")
-                                            .font(.headline)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
-                                    .background(!question.isEmpty && !isAsking ? BrainTheme.accent.opacity(0.15) : Color.clear)
-                                    .foregroundStyle(!question.isEmpty && !isAsking ? BrainTheme.accent : BrainTheme.mutedText)
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(question.isEmpty || isAsking)
-                            }
-                            .background(BrainTheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.white.opacity(0.16))
-                            )
-                            .padding(.horizontal, 20)
-                        }
-                        
-                        if let answer = answer {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("AI Answer")
-                                    .font(.headline)
-                                    .foregroundStyle(BrainTheme.accent)
-                                
-                                Text(answer)
-                                    .font(.body)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .padding(20)
-                            .background(BrainTheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.white.opacity(0.16))
-                            )
-                            .padding(.horizontal, 20)
-                        }
-                        
-                        Spacer(minLength: 40)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Text("Ask about your saved notes.")
+                        .foregroundStyle(BrainTheme.mutedText)
+                    if !appStore.isLocalAIReady {
+                        BrainInlineMessage(message: "Download the optional AI model in Settings to ask questions. Your notes stay on this device.", systemImage: "arrow.down.circle")
                     }
-                    .padding(.top, 24)
+                    if appStore.notes.isEmpty {
+                        BrainInlineMessage(message: "Save a note first so there's something to ask about.", systemImage: "note.text")
+                    }
+                    BrainSurface {
+                        TextField("What would you like to know?", text: $question, axis: .vertical)
+                            .lineLimit(3...10).disabled(isAsking).accessibilityLabel("Question about your notes")
+                    }
+                    Button(action: askQuestion) {
+                        HStack {
+                            if isAsking { ProgressView() }
+                            Text(isAsking ? "Thinking…" : "Ask AI")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAsking || appStore.notes.isEmpty || !appStore.isLocalAIReady)
+                    if let error { BrainInlineMessage(message: error, systemImage: "exclamationmark.circle") }
+                    if let answer {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Answer").font(.headline)
+                            Text(answer).textSelection(.enabled)
+                            Text("AI can make mistakes. Check details against your original notes.")
+                                .font(.footnote).foregroundStyle(BrainTheme.mutedText)
+                        }
+                    }
                 }
+                .padding(BrainTheme.pagePadding)
+                .frame(maxWidth: BrainTheme.readableWidth).frame(maxWidth: .infinity)
             }
-            .brainDarkScreen()
-            .platformNavigationBarStyle()
-            .platformHiddenNavigationBar()
+            .brainScreen().platformNavigationBarStyle()
+            .navigationTitle("Ask AI")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         }
     }
-    
+
     private func askQuestion() {
+        guard !isAsking else { return }
+        isAsking = true
+        error = nil
         let currentQuestion = question
-        // Use ALL flashcards in the app for context, regardless of the selected deck
-        let deckCards = appStore.cards
-        let context = deckCards.map { "Q: \($0.title)\nA: \($0.body)" }
-        
+        let context = appStore.notes.map { "Title: \($0.title)\nContent: \($0.body)" }
         Task {
-            isAsking = true
             defer { isAsking = false }
-            
-            if context.isEmpty {
-                await MainActor.run {
-                    self.answer = "You haven't created any flashcards yet! Please create some flashcards so I have knowledge to pull from."
-                }
-                return
-            }
-            
-            do {
-                let generatedAnswer = try await BrainCore.LLMManager.shared.answerQuestion(question: currentQuestion, context: context)
-                await MainActor.run {
-                    self.answer = generatedAnswer
-                }
-            } catch {
-                await MainActor.run {
-                    appStore.errorMessage = "AI Request failed: \(error.localizedDescription)"
-                }
-            }
+            do { answer = try await LLMManager.shared.answerQuestion(question: currentQuestion, context: context) }
+            catch { self.error = "Couldn't get an answer. Your question is still here; try again. \(error.localizedDescription)" }
         }
     }
 }

@@ -8,6 +8,7 @@ struct CreateCardTabView: View {
     @Environment(BrainAppStore.self) private var appStore
     @State private var title = ""
     @State private var bodyText = ""
+    @State private var shortTitle: String? = nil
     @State private var detailedInformation = ""
     @State private var isGenerating = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -27,195 +28,146 @@ struct CreateCardTabView: View {
         detailedInformation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false && !isGenerating
     }
 
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingDiscard = false
+    @State private var isImporting = false
+    @State private var isRequestingAudio = false
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    Button("Cancel") {
-                        resetComposer()
-                        hideKeyboard()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    BrainSurface {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Question").font(.headline)
+                            TextField("What do you want to remember?", text: $title, axis: .vertical)
+                                .lineLimit(2...8).accessibilityLabel("Card question")
+                            Divider()
+                            Text("Answer").font(.headline)
+                            TextField("Write the answer in your own words", text: $bodyText, axis: .vertical)
+                                .lineLimit(4...12).accessibilityLabel("Card answer")
+                        }
                     }
-                    .font(.title3.weight(.semibold))
+                    Button { showingDeckPicker = true } label: {
+                        HStack {
+                            Text("Deck")
+                            Spacer()
+                            Text(appStore.selectedDeckName).foregroundStyle(BrainTheme.mutedText)
+                            Image(systemName: "chevron.right")
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
 
-                    Spacer()
+                    DisclosureGroup("Generate from notes with AI") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            TextField("Paste your source notes", text: $detailedInformation, axis: .vertical)
+                                .lineLimit(4...10).disabled(isGenerating)
+                            Text("Generation replaces the question and answer above. Review them before saving.")
+                                .font(.footnote).foregroundStyle(BrainTheme.mutedText)
+                            Button(action: generateFlashcard) {
+                                HStack {
+                                    if isGenerating { ProgressView() }
+                                    Text(isGenerating ? "Generating…" : "Generate card")
+                                }
+                            }
+                            .buttonStyle(.bordered).controlSize(.large)
+                            .disabled(!canGenerate || !appStore.isLocalAIReady)
+                            if !appStore.isLocalAIReady {
+                                Text("Download the optional AI model in Settings to generate cards.")
+                                    .font(.footnote).foregroundStyle(BrainTheme.mutedText)
+                            }
+                        }
+                        .padding(.top, 16)
+                    }
+                    .padding(18).background(BrainTheme.surface, in: RoundedRectangle(cornerRadius: BrainTheme.cornerRadius))
 
-                    Text("New Card")
-                        .font(.title2.bold())
-
-                    Spacer()
-
-                    Button("Save") {
-                        appStore.createCard(
-                            title: title,
-                            body: bodyText,
-                            deckName: appStore.selectedDeckName,
-                            imagePaths: imagePaths,
-                            audioPath: audioPath
-                        )
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Attachments").font(.headline)
+                        ViewThatFits {
+                            HStack(spacing: 16) { attachmentButtons }
+                            VStack(alignment: .leading) { attachmentButtons }
+                        }
+                        if imagePaths.isEmpty == false || audioPath != nil {
+                            AttachmentSummary(imageCount: imagePaths.count, hasAudio: audioPath != nil)
+                        }
+                        if isImporting { ProgressView("Adding photos…") }
+                        Text("Attached audio stays with this card. Use Capture for a transcribed note.")
+                            .font(.footnote).foregroundStyle(BrainTheme.mutedText)
+                    }
+                    if saveConfirmation {
+                        Label("Card saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
+                }
+                .padding(BrainTheme.pagePadding)
+                .frame(maxWidth: BrainTheme.readableWidth).frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .brainScreen()
+            .platformNavigationBarStyle()
+            .navigationTitle("New card")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        if !title.isEmpty || !bodyText.isEmpty || !detailedInformation.isEmpty || !imagePaths.isEmpty || audioPath != nil || audioRecorder.isRecording {
+                            showingDiscard = true
+                        } else { dismiss() }
+                    }
+                    .disabled(isGenerating || isImporting || isRequestingAudio)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save card") {
+                        guard appStore.createCard(title: title, body: bodyText, deckName: appStore.selectedDeckName,
+                                                  imagePaths: imagePaths, audioPath: audioPath, shortTitle: shortTitle) else { return }
+                        audioRecorder.keepRecording()
                         resetComposer()
                         hideKeyboard()
                         saveConfirmation = true
+                        dismiss()
                     }
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(canSave ? BrainTheme.accent : BrainTheme.mutedText)
-                    .disabled(!canSave)
+                    .disabled(!canSave || isGenerating || isImporting || isRequestingAudio || audioRecorder.isRecording)
+                    .keyboardShortcut("s", modifiers: .command)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
-                .background(BrainTheme.surface)
-
-                Divider()
-                    .overlay(Color.white.opacity(0.08))
-
-                ScrollView {
-                    VStack(spacing: 24) {
-                        Button {
-                            showingDeckPicker = true
-                        } label: {
-                            HStack {
-                                Text("Deck")
-                                    .font(.title3)
-                                Spacer()
-                                Text(appStore.selectedDeckName)
-                                    .font(.title3)
-                                    .foregroundStyle(BrainTheme.mutedText)
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.right")
-                                    .foregroundStyle(BrainTheme.mutedText)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 18)
-                        .background(BrainTheme.surface)
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("AI Flashcard Generation")
-                                .font(.headline)
-                                .foregroundStyle(BrainTheme.mutedText)
-                                .padding(.horizontal, 20)
-
-                            VStack(spacing: 0) {
-                                TextField("Dump detailed information here...", text: $detailedInformation, axis: .vertical)
-                                    .font(.title3)
-                                    .lineLimit(4...10)
-                                    .padding(18)
-                                    .disabled(isGenerating)
-
-                                Divider()
-                                    .overlay(Color.white.opacity(0.10))
-
-                                Button(action: generateFlashcard) {
-                                    HStack {
-                                        if isGenerating {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .tint(BrainTheme.accent)
-                                        } else {
-                                            Image(systemName: "sparkles")
-                                        }
-                                        Text(isGenerating ? "Generating..." : "Generate Flashcard")
-                                            .font(.headline)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
-                                    .background(canGenerate ? BrainTheme.accent.opacity(0.15) : Color.clear)
-                                    .foregroundStyle(canGenerate ? BrainTheme.accent : BrainTheme.mutedText)
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(!canGenerate)
-                            }
-                            .background(BrainTheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.white.opacity(0.16))
-                            )
-                            .padding(.horizontal, 20)
-                        }
-
-                        VStack(spacing: 0) {
-                            TextField("Question...", text: $title, axis: .vertical)
-                                .font(.title3.weight(.semibold))
-                                .lineLimit(4...8)
-                                .padding(18)
-
-                            Divider()
-                                .overlay(Color.white.opacity(0.10))
-
-                            TextField("Answer...", text: $bodyText, axis: .vertical)
-                                .font(.title3)
-                                .lineLimit(6...12)
-                                .padding(18)
-                        }
-                        .textFieldStyle(.plain)
-                        .frame(minHeight: 260, alignment: .top)
-                        .background(BrainTheme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.white.opacity(0.16))
-                        )
-                        .padding(.horizontal, 20)
-
-                        Text("Type both sides to save the card.")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(BrainTheme.mutedText)
-
-                        if imagePaths.isEmpty == false || audioPath != nil {
-                            AttachmentSummary(imageCount: imagePaths.count, hasAudio: audioPath != nil)
-                                .padding(.horizontal, 20)
-                        }
-
-                        HStack(spacing: 28) {
-                            PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images) {
-                                ComposerToolButtonLabel(systemImage: "photo", title: "Image")
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(BrainTheme.mutedText)
-
-                            ComposerToolButton(systemImage: audioRecorder.isRecording ? "stop.fill" : "mic", title: audioRecorder.isRecording ? "Stop recording" : "Record audio") {
-                                toggleRecording()
-                            }
-                            .foregroundStyle(audioRecorder.isRecording ? .red : BrainTheme.mutedText)
-                        }
-
-                        Spacer(minLength: 40)
-                    }
-                    .padding(.top, 24)
+            }
+            .interactiveDismissDisabled(!title.isEmpty || !bodyText.isEmpty || !detailedInformation.isEmpty || !imagePaths.isEmpty || audioPath != nil || audioRecorder.isRecording)
+            .confirmationDialog("Discard this card?", isPresented: $showingDiscard, titleVisibility: .visible) {
+                Button("Discard card", role: .destructive) {
+                    for path in imagePaths { try? FileManager.default.removeItem(atPath: path) }
+                    resetComposer()
+                    dismiss()
                 }
-                .scrollDismissesKeyboard(.interactively)
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                hideKeyboard()
-            }
-            .brainDarkScreen()
-            .platformNavigationBarStyle()
-            .platformHiddenNavigationBar()
-            .alert("Card Saved", isPresented: $saveConfirmation) {
-                Button("OK") {}
-            } message: {
-                Text("The card was added to \(appStore.selectedDeckName).")
-            }
-            .sheet(isPresented: $showingDeckPicker) {
-                DeckPickerView(newDeckName: $newDeckName)
-            }
-            .task(id: selectedPhotoItems) {
-                await importSelectedPhotos()
-            }
+            .sheet(isPresented: $showingDeckPicker) { DeckPickerView(newDeckName: $newDeckName) }
+            .task(id: selectedPhotoItems) { await importSelectedPhotos() }
         }
     }
 
+    @ViewBuilder private var attachmentButtons: some View {
+        PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images) {
+            Label("Add photos", systemImage: "photo")
+        }
+        .buttonStyle(.bordered).controlSize(.large).disabled(isImporting)
+        Button { toggleRecording() } label: {
+            Label(audioRecorder.isRecording ? "Stop audio" : "Record audio", systemImage: audioRecorder.isRecording ? "stop.fill" : "mic")
+        }
+        .buttonStyle(.bordered).controlSize(.large)
+        .disabled(isRequestingAudio || (audioPath != nil && !audioRecorder.isRecording))
+    }
+
     private func generateFlashcard() {
+        guard canGenerate else { return }
+        isGenerating = true
         Task {
-            isGenerating = true
             defer { isGenerating = false }
             do {
-                let (generatedTitle, generatedBody) = try await BrainCore.LLMManager.shared.generateFlashcard(from: detailedInformation)
+                let (generatedTitle, generatedBody, generatedShortTitle) = try await BrainCore.LLMManager.shared.generateFlashcard(from: detailedInformation)
                 await MainActor.run {
                     self.title = generatedTitle
                     self.bodyText = generatedBody
+                    self.shortTitle = generatedShortTitle
                     self.detailedInformation = ""
                 }
             } catch {
@@ -227,8 +179,10 @@ struct CreateCardTabView: View {
     }
 
     private func resetComposer() {
+        detailedInformation = ""
         title = ""
         bodyText = ""
+        shortTitle = nil
         imagePaths = []
         audioPath = nil
         selectedPhotoItems = []
@@ -239,6 +193,8 @@ struct CreateCardTabView: View {
     private func importSelectedPhotos() async {
         guard selectedPhotoItems.isEmpty == false else { return }
 
+        isImporting = true
+        defer { isImporting = false }
         for item in selectedPhotoItems {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { continue }
@@ -261,11 +217,23 @@ struct CreateCardTabView: View {
             return
         }
 
-        do {
-            let destination = try appStore.makeMediaFileURL(fileExtension: "m4a")
-            try audioRecorder.start(url: destination)
-        } catch {
-            appStore.errorMessage = error.localizedDescription
+        guard !isRequestingAudio else { return }
+        isRequestingAudio = true
+        Task {
+            defer { isRequestingAudio = false }
+#if os(iOS)
+            let allowed = await AVAudioApplication.requestRecordPermission()
+#else
+            let allowed = await AVCaptureDevice.requestAccess(for: .audio)
+#endif
+            guard allowed else {
+                appStore.errorMessage = "Microphone access is off. Allow it in system Settings to record audio."
+                return
+            }
+            do {
+                let destination = try appStore.makeMediaFileURL(fileExtension: "m4a")
+                try audioRecorder.start(url: destination)
+            } catch { appStore.errorMessage = error.localizedDescription }
         }
     }
 
@@ -365,7 +333,7 @@ private struct DeckPickerView: View {
                 .scrollContentBackground(.hidden)
             }
             .padding()
-            .brainDarkScreen()
+            .brainScreen()
             .navigationTitle("Choose Deck")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -408,7 +376,7 @@ private struct ComposerToolButtonLabel: View {
         Image(systemName: systemImage)
             .font(.title2.weight(.semibold))
             .frame(width: 58, height: 58)
-            .background(Color.white.opacity(0.07))
+            .background(BrainTheme.subtleFill)
             .clipShape(Circle())
             .contentShape(Circle())
             .help(title)
@@ -438,7 +406,7 @@ private final class CardAudioRecorder: NSObject, AVAudioRecorderDelegate {
 
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.delegate = self
-        recorder.record()
+        guard recorder.record() else { throw NSError(domain: "BrainAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn’t start the microphone. Check microphone access in Settings and try again."]) }
         self.recorder = recorder
         recordingURL = url
         isRecording = true
@@ -449,6 +417,10 @@ private final class CardAudioRecorder: NSObject, AVAudioRecorderDelegate {
         recorder = nil
         isRecording = false
         return recordingURL?.path
+    }
+
+    func keepRecording() {
+        recordingURL = nil
     }
 
     func cancel() {

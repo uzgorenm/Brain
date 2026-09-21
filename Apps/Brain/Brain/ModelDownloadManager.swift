@@ -1,104 +1,79 @@
 import Foundation
 import Observation
+import BrainCore
 
 @Observable
-final class ModelDownloadManager: NSObject, URLSessionDownloadDelegate {
+@MainActor
+final class ModelDownloadManager {
     static let shared = ModelDownloadManager()
-    
+
     var isDownloading = false
     var progress: Double = 0.0
     var errorMessage: String?
     var isDownloaded = false
-    
-    @ObservationIgnored private var downloadTask: URLSessionDownloadTask?
-    @ObservationIgnored private var internalUrlSession: URLSession?
-    
-    private var urlSession: URLSession {
-        if let session = internalUrlSession { return session }
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
-        internalUrlSession = session
-        return session
+
+    @ObservationIgnored private var downloadTask: Task<Void, Never>?
+
+    private var readyMarkerURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Brain", isDirectory: true)
+            .appendingPathComponent(".lfm2.5-2.6b-mlx-4bit.ready")
     }
-    
-    private let modelURL = URL(string: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm")!
-    
-    var localModelURL: URL? {
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        return documentsURL?.appendingPathComponent("gemma-4-E2B-it.litertlm")
-    }
-    
+
     func checkModelExists() -> Bool {
-        guard let localModelURL else { return false }
-        let exists = FileManager.default.fileExists(atPath: localModelURL.path)
+        guard let readyMarkerURL else {
+            isDownloaded = false
+            return false
+        }
+        let exists = FileManager.default.fileExists(atPath: readyMarkerURL.path)
         self.isDownloaded = exists
         return exists
     }
-    
+
     func startDownload() {
         guard !isDownloading else { return }
         errorMessage = nil
         isDownloading = true
         progress = 0.0
-        
-        // Before downloading, if a partial or old file exists, we could remove it, but downloadTask handles tmp files
-        downloadTask = urlSession.downloadTask(with: modelURL)
-        downloadTask?.resume()
+
+        downloadTask = Task { [weak self] in
+            do {
+                try await LLMManager.shared.initialize { [weak self] fraction in
+                    Task { @MainActor in
+                        self?.progress = fraction
+                    }
+                }
+
+                guard !Task.isCancelled else { return }
+                try self?.markModelReady()
+                self?.isDownloading = false
+                self?.isDownloaded = true
+                self?.downloadTask = nil
+                NotificationCenter.default.post(name: NSNotification.Name("ModelDownloaded"), object: nil)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.isDownloading = false
+                self?.downloadTask = nil
+                self?.errorMessage = "Failed to download the MLX model: \(error.localizedDescription)"
+            }
+        }
     }
-    
+
     func cancelDownload() {
         downloadTask?.cancel()
+        downloadTask = nil
         isDownloading = false
         progress = 0.0
     }
-    
-    // MARK: - URLSessionDownloadDelegate
-    
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        let currentProgress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        Task { @MainActor in
-            self.progress = currentProgress
+
+    private func markModelReady() throws {
+        guard let readyMarkerURL else {
+            throw LLMError.modelCacheUnavailable
         }
-    }
-    
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Must move the file synchronously before the delegate method returns,
-        // otherwise URLSession automatically deletes the temporary file.
-        guard let localModelURL = self.localModelURL else {
-            Task { @MainActor in
-                self.isDownloading = false
-                self.errorMessage = "Could not find local documents directory."
-            }
-            return
-        }
-        
-        do {
-            if FileManager.default.fileExists(atPath: localModelURL.path) {
-                try FileManager.default.removeItem(at: localModelURL)
-            }
-            try FileManager.default.moveItem(at: location, to: localModelURL)
-            
-            Task { @MainActor in
-                self.isDownloading = false
-                self.isDownloaded = true
-                NotificationCenter.default.post(name: NSNotification.Name("ModelDownloaded"), object: nil)
-            }
-        } catch {
-            Task { @MainActor in
-                self.isDownloading = false
-                self.errorMessage = "Failed to save model: \(error.localizedDescription)"
-            }
-        }
-    }
-    
-    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            Task { @MainActor in
-                self.isDownloading = false
-                // Ignore cancellation errors
-                if (error as NSError).code != NSURLErrorCancelled {
-                    self.errorMessage = error.localizedDescription
-                }
-            }
-        }
+        try FileManager.default.createDirectory(
+            at: readyMarkerURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("MLX model ready".utf8).write(to: readyMarkerURL, options: .atomic)
     }
 }

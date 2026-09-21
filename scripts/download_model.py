@@ -1,45 +1,27 @@
 #!/usr/bin/env python3
 
-import os
 import sys
-import subprocess
-import urllib.request
-from pathlib import Path
 
-def download_file(url, target_path):
-    print(f"Downloading model to {target_path}...")
-    try:
-        # Use curl to download the file showing progress
-        subprocess.run(["curl", "-L", "-o", target_path, url], check=True)
-        print("\nDownload complete!")
-    except subprocess.CalledProcessError as e:
-        print(f"\nFailed to download: {e}")
-        sys.exit(1)
+MODEL_ID = "LiquidAI/LFM2.5-2.6B-MLX-4bit"
 
 def main():
-    # URL to the Gemma-4-E2B LiteRT-LM model on Hugging Face
-    model_url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
-    
-    # We will try to download it into the Xcode simulator document directory
-    # or print instructions to copy it into the app via Files.
-    print("This script downloads the Gemma-4-E2B LiteRT model (approx 2.5GB).")
-    
-    apps_dir = Path(__file__).resolve().parent.parent / "Apps" / "Brain"
-    
-    target_dir = apps_dir / "Model"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    
-    model_path = target_dir / "gemma-4-E2B-it.litertlm"
-    
-    if model_path.exists():
-        print(f"Model already exists at {model_path}.")
-        return
-        
-    download_file(model_url, str(model_path))
-    
-    print("\nNext Steps:")
-    print("1. When running on an iOS Simulator: Drag and drop the downloaded model file into the Simulator window, then save it to the Brain app folder via Files app.")
-    print("2. When running on a physical iPhone: Transfer the file using AirDrop or Finder to the Brain app's Documents folder.")
+    print(f"Prefetching {MODEL_ID} for MLX Swift...")
+    print("This downloads the multi-file 4-bit checkpoint into the Hugging Face cache.")
+
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("Install the Hugging Face Hub client first: python3 -m pip install -U huggingface_hub")
+        sys.exit(1)
+
+    try:
+        model_path = snapshot_download(repo_id=MODEL_ID, repo_type="model")
+    except Exception as error:
+        print(f"\nFailed to download {MODEL_ID}: {error}")
+        sys.exit(1)
+
+    print(f"\nModel cache is ready at {model_path}")
+    print("Brain downloads its own iOS cache through MLX Swift when needed.")
 
 if __name__ == "__main__":
     main()
