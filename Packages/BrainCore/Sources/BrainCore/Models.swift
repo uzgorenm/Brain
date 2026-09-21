@@ -84,8 +84,8 @@ public enum ReviewStatus: Equatable, Sendable {
             "new"
         case .due:
             "due"
-        case .mastered(let percent):
-            "mastered_\(percent)"
+        case .mastered:
+            "mastered_\(masteryPercent)"
         }
     }
 
@@ -94,18 +94,23 @@ public enum ReviewStatus: Equatable, Sendable {
         case .new, .due:
             0
         case .mastered(let percent):
-            percent
+            Self.normalizedMastery(percent)
         }
     }
 
     public static func fromStorage(_ value: String, masteryPercent: Int) -> ReviewStatus {
         if value == "new" { return .new }
         if value == "due" { return .due }
-        return .mastered(Self.clampedMastery(masteryPercent))
+        return .mastered(Self.normalizedMastery(masteryPercent))
     }
 
     public static func clampedMastery(_ value: Int) -> Int {
         min(100, max(0, value))
+    }
+
+    public static func normalizedMastery(_ value: Int) -> Int {
+        let clamped = min(100, max(1, value))
+        return min(100, ((clamped + 19) / 20) * 20)
     }
 }
 

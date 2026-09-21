@@ -67,7 +67,7 @@ public struct ReviewScheduler: Sendable {
     public func masteryPercent(forIntervalDays intervalDays: Int) -> Int {
         guard intervalDays > 0 else { return 0 }
         let rawPercent = Int(ceil(Double(intervalDays) / Double(Self.masteredIntervalDays) * 100))
-        return ReviewStatus.clampedMastery(rawPercent)
+        return ReviewStatus.normalizedMastery(rawPercent)
     }
 
     private func elapsedDays(from state: ReviewState, reviewedAt: Date) -> Int {

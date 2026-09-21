@@ -10,7 +10,7 @@ import Testing
 
     let (next, event) = scheduler.apply(.good, to: state, reviewedAt: reviewedAt)
 
-    #expect(next.status == .mastered(1))
+    #expect(next.status == .mastered(20))
     #expect(next.difficulty != nil)
     #expect(next.stability == ReviewScheduler.defaultParameters[2])
     #expect(next.intervalDays == 2)
@@ -18,7 +18,7 @@ import Testing
     #expect(event.scheduledDays == 2)
     #expect(event.elapsedDays == 0)
     #expect(event.previousMasteryPercent == 0)
-    #expect(event.nextMasteryPercent == 1)
+    #expect(event.nextMasteryPercent == 20)
 }
 
 @Test func easyReviewUsesExistingFSRSMemoryState() {
@@ -41,13 +41,19 @@ import Testing
     #expect(next.status.masteryPercent >= 0)
 }
 
-@Test func oneYearIntervalIsMastered() {
+@Test func intervalsMapToSupportedMasteryBands() {
     let scheduler = ReviewScheduler()
 
-    #expect(scheduler.masteryPercent(forIntervalDays: 1) == 1)
-    #expect(scheduler.masteryPercent(forIntervalDays: 2) == 1)
-    #expect(scheduler.masteryPercent(forIntervalDays: 60) == 17)
-    #expect(scheduler.masteryPercent(forIntervalDays: 183) == 51)
+    #expect(scheduler.masteryPercent(forIntervalDays: 1) == 20)
+    #expect(scheduler.masteryPercent(forIntervalDays: 2) == 20)
+    #expect(scheduler.masteryPercent(forIntervalDays: 60) == 20)
+    #expect(scheduler.masteryPercent(forIntervalDays: 183) == 60)
     #expect(scheduler.masteryPercent(forIntervalDays: 365) == 100)
     #expect(scheduler.masteryPercent(forIntervalDays: 730) == 100)
+}
+
+@Test func legacyStoredMasteryNormalizesToSupportedBand() {
+    #expect(ReviewStatus.fromStorage("mastered", masteryPercent: 1) == .mastered(20))
+    #expect(ReviewStatus.fromStorage("mastered", masteryPercent: 51) == .mastered(60))
+    #expect(ReviewStatus.fromStorage("mastered", masteryPercent: 100) == .mastered(100))
 }
