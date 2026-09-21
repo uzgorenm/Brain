@@ -40,23 +40,26 @@ public final class SQLiteStore: @unchecked Sendable {
         let metadataData = try JSONEncoder().encode(metadata)
         let metadataJSON = String(data: metadataData, encoding: .utf8) ?? "{}"
 
-        try execute(
-            """
-            INSERT INTO cards (id, title, body, metadata_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [.text(card.id.uuidString), .text(title), .text(body), .text(metadataJSON), .double(now.timeIntervalSince1970), .double(now.timeIntervalSince1970)]
-        )
+        try withTransaction {
+            try execute(
+                """
+                INSERT INTO cards (id, title, body, metadata_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [.text(card.id.uuidString), .text(title), .text(body), .text(metadataJSON), .double(now.timeIntervalSince1970), .double(now.timeIntervalSince1970)]
+            )
 
-        for tag in tags {
-            try addTag(tag, to: card.id)
+            for tag in tags {
+                try addTag(tag, to: card.id)
+            }
+
+            for path in imagePaths {
+                try addImage(path: path, to: card.id)
+            }
+
+            try saveReviewState(ReviewState(cardID: card.id, status: .new))
         }
 
-        for path in imagePaths {
-            try addImage(path: path, to: card.id)
-        }
-
-        try saveReviewState(ReviewState(cardID: card.id, status: .new))
         return card
     }
 
@@ -74,21 +77,23 @@ public final class SQLiteStore: @unchecked Sendable {
     }
 
     public func deleteCard(_ cardID: UUID, deletedAt: Date = Date()) throws {
-        try execute(
-            """
-            DELETE FROM edges
-            WHERE source_card_id = ? OR target_card_id = ?
-            """,
-            [.text(cardID.uuidString), .text(cardID.uuidString)]
-        )
-        try execute(
-            """
-            UPDATE cards
-            SET deleted_at = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            [.double(deletedAt.timeIntervalSince1970), .double(deletedAt.timeIntervalSince1970), .text(cardID.uuidString)]
-        )
+        try withTransaction {
+            try execute(
+                """
+                DELETE FROM edges
+                WHERE source_card_id = ? OR target_card_id = ?
+                """,
+                [.text(cardID.uuidString), .text(cardID.uuidString)]
+            )
+            try execute(
+                """
+                UPDATE cards
+                SET deleted_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                [.double(deletedAt.timeIntervalSince1970), .double(deletedAt.timeIntervalSince1970), .text(cardID.uuidString)]
+            )
+        }
     }
 
     public func addEdge(from sourceCardID: UUID, to targetCardID: UUID, label: String = "related to", weight: Double = 1) throws -> CardEdge {
@@ -120,7 +125,6 @@ public final class SQLiteStore: @unchecked Sendable {
     }
 
     public func addTag(_ name: String, to cardID: UUID) throws {
-        let tagID = UUID()
         try execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", [.text(name)])
         try execute(
             """
@@ -129,7 +133,6 @@ public final class SQLiteStore: @unchecked Sendable {
             """,
             [.text(cardID.uuidString), .text(name)]
         )
-        _ = tagID
     }
 
     public func addImage(path: String, to cardID: UUID) throws {
@@ -262,25 +265,27 @@ public final class SQLiteStore: @unchecked Sendable {
     public func applyReview(cardID: UUID, rating: ReviewRating, reviewedAt: Date = Date()) throws -> ReviewState {
         let currentState = try reviewState(for: cardID) ?? ReviewState(cardID: cardID)
         let (nextState, event) = scheduler.apply(rating, to: currentState, reviewedAt: reviewedAt)
-        try saveReviewState(nextState)
-        try execute(
-            """
-            INSERT INTO review_events
-            (id, card_id, user_id, reviewed_at, rating, elapsed_days, scheduled_days, previous_mastery_percent, next_mastery_percent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                .text(event.id.uuidString),
-                .text(cardID.uuidString),
-                .text(event.userID),
-                .double(event.reviewedAt.timeIntervalSince1970),
-                .text(rating.rawValue),
-                .int(event.elapsedDays),
-                .int(event.scheduledDays),
-                .int(event.previousMasteryPercent),
-                .int(event.nextMasteryPercent)
-            ]
-        )
+        try withTransaction {
+            try saveReviewState(nextState)
+            try execute(
+                """
+                INSERT INTO review_events
+                (id, card_id, user_id, reviewed_at, rating, elapsed_days, scheduled_days, previous_mastery_percent, next_mastery_percent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(event.id.uuidString),
+                    .text(cardID.uuidString),
+                    .text(event.userID),
+                    .double(event.reviewedAt.timeIntervalSince1970),
+                    .text(rating.rawValue),
+                    .int(event.elapsedDays),
+                    .int(event.scheduledDays),
+                    .int(event.previousMasteryPercent),
+                    .int(event.nextMasteryPercent)
+                ]
+            )
+        }
         return nextState
     }
 
@@ -441,10 +446,28 @@ private extension SQLiteStore {
         try bind(values, to: statement)
 
         var results: [T] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             results.append(try map(statement))
+            result = sqlite3_step(statement)
+        }
+
+        guard result == SQLITE_DONE else {
+            throw BrainStoreError.stepFailed(Self.errorMessage(db))
         }
         return results
+    }
+
+    func withTransaction<T>(_ operation: () throws -> T) throws -> T {
+        try execute("BEGIN IMMEDIATE TRANSACTION", [])
+        do {
+            let value = try operation()
+            try execute("COMMIT", [])
+            return value
+        } catch {
+            try? execute("ROLLBACK", [])
+            throw error
+        }
     }
 
     func addColumnIfMissing(table: String, name: String, definition: String) throws {
