@@ -682,11 +682,13 @@ private struct GraphCardMoreView: View {
     @State private var audioPlayer = CardAudioPlayer()
     @State private var isCardInfoExpanded = true
     @State private var shouldIgnoreNextOutsideTap = false
+    @State private var showingEditor = false
 
     var body: some View {
-        let images = appStore.images(for: card)
-        let state = appStore.reviewState(for: card)
-        let audioURL = appStore.audioURL(for: card)
+        let currentCard = appStore.cards.first(where: { $0.id == card.id }) ?? card
+        let images = appStore.images(for: currentCard)
+        let state = appStore.reviewState(for: currentCard)
+        let audioURL = appStore.audioURL(for: currentCard)
 
         NavigationStack {
             GeometryReader { proxy in
@@ -702,10 +704,10 @@ private struct GraphCardMoreView: View {
                                 VStack(alignment: .leading, spacing: 12) {
                                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text(card.title)
+                                            Text(currentCard.title)
                                                 .font(.title2.bold())
                                                 .lineLimit(isCardInfoExpanded ? nil : 1)
-                                            Text(card.deckName)
+                                            Text(currentCard.deckName)
                                                 .font(.headline)
                                                 .foregroundStyle(BrainTheme.accent)
                                         }
@@ -721,7 +723,7 @@ private struct GraphCardMoreView: View {
                                     ReviewStateBadge(state: state)
 
                                     if isCardInfoExpanded {
-                                        Text(card.body)
+                                        Text(currentCard.body)
                                             .font(.body)
                                             .foregroundStyle(.secondary)
                                             .multilineTextAlignment(.leading)
@@ -807,6 +809,15 @@ private struct GraphCardMoreView: View {
                         dismiss()
                     }
                 }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Edit") {
+                        showingEditor = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showingEditor) {
+                EditCardView(card: currentCard)
             }
             .onDisappear {
                 audioPlayer.stop()

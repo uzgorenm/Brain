@@ -144,6 +144,26 @@ final class BrainAppStore {
         }
     }
 
+    @discardableResult
+    func updateCard(_ card: KnowledgeCard, title: String, body: String, deckName: String) -> Bool {
+        let normalizedDeckName = Self.normalizedDeckName(deckName)
+        var updatedCard = card
+        updatedCard.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        updatedCard.body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        updatedCard.metadata[KnowledgeCard.deckMetadataKey] = normalizedDeckName
+
+        do {
+            try requireStore().updateCard(updatedCard)
+            try loadCards()
+            selectedDeckName = normalizedDeckName
+            selectedCardID = card.id
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func makeMediaFileURL(fileExtension: String) throws -> URL {
         guard let appSupportURL else {
             throw BrainStoreError.openFailed("Application support folder is unavailable.")
